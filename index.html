@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="pt-br">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Toy Story 3 - PS2 Web</title>
+<script src="https://cdn.jsdelivr.net/npm/fflate@0.8.2/umd/index.js"></script>
+<script async src="https://cdn.jsdelivr.net/gh/jpd002/Play-@latest/build/play.js"></script>
+<style>
+*{margin:0;box-sizing:border-box}
+body{background:#080808;color:#fff;font-family:system-ui}
+#game{position:relative;width:100vw;height:100vh;background:#000}
+canvas{width:100%;height:100%;display:block;object-fit:contain}
+#hud{position:absolute;left:12px;bottom:12px;display:flex;gap:8px;z-index:10}
+.btn{background:#1a1a1a;border:1px solid #2a2a2a;color:#fff;padding:9px 14px;border-radius:999px;font-size:12px;font-weight:700;cursor:pointer}
+.btn:hover{background:#fff;color:#000}
+#load{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);background:#111;border:1px solid #222;border-radius:14px;padding:16px;width:300px;display:none}
+#bar{height:4px;background:#222;border-radius:10px;margin-top:8px;overflow:hidden}
+#fill{height:100%;width:0;background:#fff}
+</style>
+</head>
+<body>
+<div id="game">
+<canvas id="c" width="3840" height="2160"></canvas>
+<div id="load"><div id="txt">carregando</div><div id="bar"><div id="fill"></div></div></div>
+<div id="hud">
+<input type="file" id="f" accept=".iso,.bin,.chd,.zip" hidden>
+<button class="btn" id="pick">CARREGAR ISO</button>
+<button class="btn" id="boot">BOOT</button>
+<button class="btn" id="full">TELA CHEIA</button>
+<button class="btn" id="clear">LIMPAR</button>
+</div>
+</div>
+<script>
+const canvas=document.getElementById('c');
+const fileInput=document.getElementById('f');
+const loadBox=document.getElementById('load');
+const txt=document.getElementById('txt');
+const fill=document.getElementById('fill');
+let Play=null, isoData=null;
+
+function status(t,p){
+  loadBox.style.display='block';
+  txt.textContent=t;
+  fill.style.width=p+'%';
+  if(p>=100) setTimeout(()=>loadBox.style.display='none',600);
+}
+
+async function getFile(name){
+  try{
+    const root=await navigator.storage.getDirectory();
+    const h=await root.getFileHandle(name);
+    const f=await h.getFile();
+    return new Uint8Array(await f.arrayBuffer());
+  }catch{return null}
+}
+async function saveFile(name,data){
+  const root=await navigator.storage.getDirectory();
+  const h=await root.getFileHandle(name,{create:true});
+  const w=await h.createWritable();
+  await w.write(data); await w.close();
+}
+
+document.getElementById('pick').onclick=()=>fileInput.click();
+document.getElementById('full').onclick=()=>!document.fullscreenElement?document.getElementById('game').requestFullscreen():document.exitFullscreen();
+document.getElementById('clear').onclick=async()=>{
+  const root=await navigator.storage.getDirectory();
+  try{await root.removeEntry('toystory3.iso')}catch{}
+  try{await root.removeEntry('openps2bios.bin')}catch{}
+  location.reload();
+};
+
+fileInput.onchange=async(e)=>{
+  const file=e.target.files[0]; if(!file) return;
+  status('salvando '+file.name,20);
+  let data=new Uint8Array(await file.arrayBuffer());
+  if(file.name.endsWith('.zip')){
+    status('extraindo',50);
+    data=await new Promise((res,rej)=>{
+      fflate.unzip(data,(err,files)=>{
+        if(err) return rej(err);
+        const k=Object.keys(files).find(x=>/\.iso$|\.bin$|\.chd$/i.test(x));
+        res(files[k]);
+      });
+    });
+  }
+  await saveFile('toystory3.iso',data);
+  status('pronto',100);
+};
+
+async function getBios(){
+  let bios=await getFile('openps2bios.bin');
+  if(bios) return bios;
+  const urls=[
+    'https://cdn.jsdelivr.net/gh/pc-remote/openps2bios@latest/bin/openps2bios.bin',
+    'https://raw.githubusercontent.com/pc-remote/openps2bios/main/bin/openps2bios.bin'
+  ];
+  for(let u of urls){
+    try{
+      const r=await fetch(u);
+      const b=new Uint8Array(await r.arrayBuffer());
+      if(b.length>100000){await saveFile('openps2bios.bin',b); return b;}
+    }catch{}
+  }
+  return null;
+}
+
+setInterval(()=>{if(!Play&&window.Play) Play=window.Play},200);
+
+document.getElementById('boot').onclick=async()=>{
+  status('checando bios',10);
+  const bios=await getBios();
+  if(!bios){status('bios falhou',100); return;}
+  
+  status('checando iso',30);
+  isoData=await getFile('toystory3.iso');
+  if(!isoData||!Play){status('cadê a iso?',100); return;}
+
+  if(window.AudioContext) try{await new AudioContext().resume()}catch{}
+
+  Play.SetCanvas(canvas);
+  Play.SetBios(bios);
+  Play.SetOption('renderer','vulkan');
+  Play.SetResolution(1920,1080);
+  Play.SetUpscale(3840,2160);
+  Play.SetOption('threads','8');
+
+  status('bootando Toy Story 3',80);
+  Play.Boot(isoData);
+  status('rodando',100);
+
+  (function loop(){
+    requestAnimationFrame(loop);
+    if(Play.Tick) Play.Tick();
+    if(Play.Render) Play.Render();
+  })();
+};
+</script>
+</body>
+</html>
